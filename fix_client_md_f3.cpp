@@ -9,6 +9,19 @@
 #include <string>
 class MyApplication : public FIX::Application {
 public:
+    uint incremental_msg_receivedtimes = 0;
+
+    void printMessageFields(const FIX::Message &message)
+    {
+        FIX::DataDictionary dataDictionary("/usr/local/share/quickfix/FIX44.xml");
+        for (FIX::FieldMap::const_iterator it = message.begin(); it != message.end(); ++it)
+        {
+            std::string fieldName;
+            dataDictionary.getFieldName(it->getTag(), fieldName);
+            std::cout << fieldName << "->" << it->getFixString() << std::endl;
+        }
+    }
+
     void onCreate(const FIX::SessionID& sessionID) override {
         std::cout << "Session created: " << sessionID << std::endl;
     }
@@ -21,7 +34,7 @@ public:
         marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
 
         // 设置请求字段
-        marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");
+        marketDataRequest.setField(FIX::FIELD::MDReqID, "ltp"+std::to_string(time(NULL))+"ltp");
         marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "1");  // Snapshot + Updates (Subscribe)
         marketDataRequest.setField(FIX::FIELD::MarketDepth, "0");  // Full Market Depth
         marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
@@ -59,42 +72,9 @@ public:
 
     }
 
-    void unsubscribe(const FIX::SessionID& sessionID) {
-        // 构建 MarketDataRequest 消息
-        FIX::Message marketDataRequest;
-        marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
-
-        // 设置请求字段
-        marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");
-        marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "2");  // Disable previous Snapshot + Update Request (Unsubscribe)
-        marketDataRequest.setField(FIX::FIELD::MarketDepth, "0");  // Full Market Depth
-        marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
-
-        // 设置订阅的条目类型
-        FIX::Group mdEntryTypes(267, FIX::FIELD::MDEntryType);  // 267=NoMDEntryTypes
-        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "0");  // Bid
-        marketDataRequest.addGroup(mdEntryTypes);
-        
-        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "1");  // Offer
-        marketDataRequest.addGroup(mdEntryTypes);
-
-        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "2");  // Trade
-        marketDataRequest.addGroup(mdEntryTypes);
-
-        // 设置订阅的合约
-        std::vector<std::string> symbols = {"BTCUSD", "ETHUSD", "LTCUSD"};
-        for (const auto& symbol : symbols) {
-            FIX::Group relatedSym(146, FIX::FIELD::Symbol);  // 146=NoRelatedSym
-            relatedSym.setField(FIX::FIELD::Symbol, symbol);
-            marketDataRequest.addGroup(relatedSym);
-        }
-
-        // 发送 MarketDataRequest 消息
-        FIX::Session::sendToTarget(marketDataRequest, sessionID);
-    }
-
     void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {
-        //std::cout << "Sending application message: " << message << std::endl;
+        std::cout << "Sending application message: " << message << std::endl;
+        printMessageFields(message);
     }
 
     void fromAdmin(const FIX::Message& message, const FIX::SessionID& sessionID) override {
@@ -103,6 +83,7 @@ public:
 
    void fromApp(const FIX::Message& message, const FIX::SessionID& sessionID) override {
     std::cout << "Received application message: " << message << std::endl;
+    printMessageFields(message);
 
     try {
         FIX::StringField msgType(FIX::FIELD::MsgType);
@@ -110,8 +91,8 @@ public:
 
         std::string msgTypeValue = msgType.getString();
 
-        if (msgTypeValue == FIX::MsgType_MarketDataSnapshotFullRefresh || msgTypeValue == FIX::MsgType_MarketDataIncrementalRefresh) {
-            std::cout << "Received " << (msgTypeValue == FIX::MsgType_MarketDataSnapshotFullRefresh ? "MarketDataSnapshotFullRefresh" : "MarketDataIncrementalRefresh") << " message: " << message << std::endl;
+        if (msgTypeValue == FIX::MsgType_MarketDataSnapshotFullRefresh) {
+            std::cout << "Received MarketDataSnapshotFullRefresh message: " << message << std::endl;
 
             FIX::Group marketDataGroup(268, FIX::FIELD::MDEntryType);  // (268=NoMDEntries, 269=MDEntryType)
             int index = 1;
@@ -124,16 +105,11 @@ public:
                 }
 
                 FIX::StringField entryTypeField(FIX::FIELD::MDEntryType);
-
                 marketDataGroup.getField(entryTypeField);
-
                 std::string entryType = entryTypeField.getString();
 
                 double price = 0.0;
                 double volume = 0.0;
-                std::string symbol = "";
-                std::string timestamp = "";
-                std::string channel = "";
                 if (marketDataGroup.isSetField(FIX::FIELD::MDEntryPx)) {
                     FIX::DoubleField priceField(FIX::FIELD::MDEntryPx);
                     marketDataGroup.getField(priceField);
@@ -146,27 +122,76 @@ public:
                     volume = volumeField.getValue();
                 }
 
-                if (message.isSetField(FIX::FIELD::Symbol)) {
-                    FIX::StringField symbolField(FIX::FIELD::Symbol);
-                    message.getField(symbolField);
-                    symbol = symbolField.getString();
-                }
-                
-                if (marketDataGroup.isSetField(FIX::FIELD::SendingTime)) {
-                    FIX::UtcTimeStampField timestampField(FIX::FIELD::SendingTime);
-                    marketDataGroup.getField(timestampField);
-                    timestamp = timestampField.getString();
-                }
-
-                if (marketDataGroup.isSetField(FIX::FIELD::MDEntryID)) {
-                    FIX::StringField channelField(FIX::FIELD::MDEntryID);
-                    marketDataGroup.getField(channelField);
-                    channel = channelField.getString();
-                }
-
-                std::cout << "Timestamp=[" << timestamp << "], Channel=[" << channel << "] " << "Entry " << index << ": Symbol=" << symbol <<", Type=" << entryType << ", Price=" << price << ", Volume=" << volume << std::endl;
+                std::cout << "Entry " << index << ": Type=" << entryType << ", Price=" << price << ", Volume=" << volume << std::endl;
 
                 index++;
+            }
+        } else if (msgTypeValue == FIX::MsgType_MarketDataIncrementalRefresh) {
+            std::cout << "Received MarketDataIncrementalRefresh message: " << message << std::endl;
+
+            FIX::Group marketDataGroup(268, FIX::FIELD::MDEntryType);  // (268=NoMDEntries, 269=MDEntryType)
+            int index = 1;
+            incremental_msg_receivedtimes++;
+
+            while (true) {
+                try {
+                    message.getGroup(index, marketDataGroup);
+                } catch (const FIX::FieldNotFound&) {
+                    break;
+                }
+
+                FIX::StringField entryTypeField(FIX::FIELD::MDEntryType);
+                marketDataGroup.getField(entryTypeField);
+                std::string entryType = entryTypeField.getString();
+
+                double price = 0.0;
+                double volume = 0.0;
+                if (marketDataGroup.isSetField(FIX::FIELD::MDEntryPx)) {
+                    FIX::DoubleField priceField(FIX::FIELD::MDEntryPx);
+                    marketDataGroup.getField(priceField);
+                    price = priceField.getValue();
+                }
+
+                if (marketDataGroup.isSetField(FIX::FIELD::MDEntrySize)) {
+                    FIX::DoubleField volumeField(FIX::FIELD::MDEntrySize);
+                    marketDataGroup.getField(volumeField);
+                    volume = volumeField.getValue();
+                }
+
+                std::cout << "Entry " << index << ": Type=" << entryType << ", Price=" << price << ", Volume=" << volume << std::endl;
+
+                index++;
+            }
+            if (incremental_msg_receivedtimes == 2)
+            {
+            // 构建 MarketDataRequest 消息
+            FIX::Message marketDataRequest;
+            marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
+
+            // 设置请求字段
+            marketDataRequest.setField(FIX::FIELD::MDReqID, "ltp"+std::to_string(time(NULL))+"ltp");
+            marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "2");  // Disable previous snapshot + Update (Unsubscribe)
+            marketDataRequest.setField(FIX::FIELD::MarketDepth, "0");  // Full Market Depth
+            marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
+
+            // 设置订阅的条目类型
+            FIX::Group mdEntryTypes(267, FIX::FIELD::MDEntryType);  // 267=NoMDEntryTypes
+            mdEntryTypes.setField(FIX::FIELD::MDEntryType, "0");  // Bid
+            marketDataRequest.addGroup(mdEntryTypes);
+        
+            mdEntryTypes.setField(FIX::FIELD::MDEntryType, "1");  // Offer
+            marketDataRequest.addGroup(mdEntryTypes);
+
+            mdEntryTypes.setField(FIX::FIELD::MDEntryType, "2");  // Trade
+            marketDataRequest.addGroup(mdEntryTypes);
+
+            // 设置订阅的合约
+            FIX::Group relatedSym(146, FIX::FIELD::Symbol);  // 146=NoRelatedSym
+            relatedSym.setField(FIX::FIELD::Symbol, "BTCUSD");
+            marketDataRequest.addGroup(relatedSym);
+
+            // 发送 MarketDataRequest 消息
+            FIX::Session::sendToTarget(marketDataRequest, sessionID);
             }
         }
     } catch (const FIX::FieldNotFound& e) {
@@ -200,16 +225,7 @@ int main(int argc, char** argv) {
 
         initiator.start();
 
-        std::cout << "Press Enter to unsubscribe." << std::endl;
-        std::cin.get();
-
-        // 使用迭代器访问第一个会话ID
-        const auto& sessions = initiator.getSessions();
-        if (!sessions.empty()) {
-            application.unsubscribe(*sessions.begin());
-        }
-
-        std::cout << "Unsubscribed. Press Ctrl-C to exit." << std::endl;
+        std::cout << "Press Ctrl-C to exit." << std::endl;
         while (true) {
             FIX::process_sleep(1);
         }

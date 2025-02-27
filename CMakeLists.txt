@@ -15,15 +15,37 @@ include_directories(/usr/local/include/)
 link_directories(/usr/local/lib/)
 
 set(practice
-    fix_client_1
-    fix_client_2
-    fix_client_3
-    fix_client_4
-    fix_client_5
-    fix_client_t1
-    fix_client_t2
-    fix_client_t3
-    fix_client_t4
+    fix_client_md_f1
+    fix_client_md_f2
+    fix_client_md_f3
+    fix_client_md_f4
+    fix_client_md_f5
+    fix_client_md_t1
+    fix_client_md_t2
+    fix_client_md_t3
+    fix_client_trade1
+    fix_client_trade2
+    fix_om_1
+    fix_om_2
+    fix_om_3
+    fix_om_4
+    fix_om_5
+    fix_om_6
+    fix_om_7
+    fix_om_8
+    fix_om_9
+    fix_om_10
+    fix_om_11
+    fix_om_12
+    fix_om_13
+    fix_om_14
+    fix_om_15
+    fix_om_16
+    fix_om_17
+    fix_sm_1a
+    fix_sm_1b
+    fix_sm_3a
+    fix_sm_3b
 )
 
 if(NOT CMAKE_BUILD_TYPE)

@@ -11,6 +11,17 @@
 
 class MyApplication : public FIX::Application {
 public:
+    void printMessageFields(const FIX::Message &message)
+    {
+        FIX::DataDictionary dataDictionary("/usr/local/share/quickfix/FIX50.xml");
+        for (FIX::FieldMap::const_iterator it = message.begin(); it != message.end(); ++it)
+        {
+            std::string fieldName;
+            dataDictionary.getFieldName(it->getTag(), fieldName);
+            std::cout << fieldName << "->" << it->getFixString() << std::endl;
+        }
+    }
+
     void onCreate(const FIX::SessionID& sessionID) override {
         std::cout << "Session created: " << sessionID << std::endl;
     }
@@ -23,7 +34,7 @@ public:
         marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
 
         // 设置请求字段
-        marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");
+        marketDataRequest.setField(FIX::FIELD::MDReqID, "ltp"+std::to_string(time(NULL))+"ltp");
         marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "1");  // Snapshot + Updates (Subscribe)
         marketDataRequest.setField(FIX::FIELD::MarketDepth, "1");  // Top of Book
         marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
@@ -74,12 +85,16 @@ public:
         }
     }
 
-    void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {}
+    void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {
+        std::cout << "Sending application message: " << message << std::endl;
+        printMessageFields(message);
+    }
 
     void fromAdmin(const FIX::Message& message, const FIX::SessionID& sessionID) override {}
 
     void fromApp(const FIX::Message& message, const FIX::SessionID& sessionID) override {
         std::cout << "Received application message: " << message << std::endl;
+        printMessageFields(message);
 
         try {
             FIX::StringField msgType(FIX::FIELD::MsgType);

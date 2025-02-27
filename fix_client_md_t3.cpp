@@ -11,6 +11,17 @@
 
 class MyApplication : public FIX::Application {
 public:
+    void printMessageFields(const FIX::Message &message)
+    {
+        FIX::DataDictionary dataDictionary("/usr/local/share/quickfix/FIX50.xml");
+        for (FIX::FieldMap::const_iterator it = message.begin(); it != message.end(); ++it)
+        {
+            std::string fieldName;
+            dataDictionary.getFieldName(it->getTag(), fieldName);
+            std::cout << fieldName << "->" << it->getFixString() << std::endl;
+        }
+    }
+
     void onCreate(const FIX::SessionID& sessionID) override {
         std::cout << "Session created: " << sessionID << std::endl;
     }
@@ -23,7 +34,7 @@ public:
         marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
 
         // 设置请求字段
-        marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");
+        marketDataRequest.setField(FIX::FIELD::MDReqID, "ltp"+std::to_string(time(NULL))+"ltp");
         marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "1");  // Snapshot + Updates (Subscribe)
         marketDataRequest.setField(FIX::FIELD::MarketDepth, "1");  // Top of Book
         marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
@@ -74,12 +85,16 @@ public:
         }
     }
 
-    void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {}
+    void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {
+        std::cout << "Sending application message: " << message << std::endl;
+        printMessageFields(message);
+    }
 
     void fromAdmin(const FIX::Message& message, const FIX::SessionID& sessionID) override {}
 
     void fromApp(const FIX::Message& message, const FIX::SessionID& sessionID) override {
         std::cout << "Received application message: " << message << std::endl;
+        printMessageFields(message);
 
         try {
             FIX::StringField msgType(FIX::FIELD::MsgType);
@@ -120,7 +135,7 @@ public:
                     double volume = 0.0;
                     std::string symbol = "";
                     std::string timestamp = "";
-                    std::string channel = "";
+                    std::string seqnum = "";
 
                     if (marketDataGroup.isSetField(FIX::FIELD::MDEntryPx)) {
                         FIX::DoubleField priceField(FIX::FIELD::MDEntryPx);
@@ -152,10 +167,10 @@ public:
                         timestamp += " " + timeField.getString();
                     }
 
-                    if (marketDataGroup.isSetField(FIX::FIELD::MDEntryID)) {
-                        FIX::StringField channelField(FIX::FIELD::MDEntryID);
-                        marketDataGroup.getField(channelField);
-                        channel = channelField.getString();
+                    if (message.getHeader().isSetField(FIX::FIELD::MsgSeqNum)) {
+                        FIX::StringField seqField(FIX::FIELD::MsgSeqNum);
+                        message.getHeader().getField(seqField);
+                        seqnum = seqField.getString();
                     }
 
                     if (msgTypeValue == FIX::MsgType_MarketDataIncrementalRefresh) {
@@ -166,10 +181,56 @@ public:
                         std::cout << "Update Action: " << updateAction << std::endl;
                     }
 
-                    std::cout << "Timestamp=[" << timestamp << "], Channel=[" << channel << "] Entry " << index << ": Symbol=" << symbol << ", Type=" << entryType << " (" << entryTypeDesc << "), Price=" << price << ", Volume=" << volume << std::endl;
+                    std::cout << "Timestamp=[" << timestamp << "], Seq=[" << seqnum << "] Entry " << index << ": Symbol=" << symbol << ", Type=" << entryType << " (" << entryTypeDesc << "), Price=" << price << ", Volume=" << volume << std::endl;
 
                     index++;
                 }
+            }
+
+            if (msgTypeValue == FIX::MsgType_MarketDataIncrementalRefresh) {
+                // 构建 MarketDataRequest 消息
+                FIX::Message marketDataRequest;
+                marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
+
+                // 设置请求字段
+                marketDataRequest.setField(FIX::FIELD::MDReqID, "ltp"+std::to_string(time(NULL))+"ltp");
+                marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "2");  // Disable previous snapshot + Update (Unsubscribe)
+                marketDataRequest.setField(FIX::FIELD::MarketDepth, "1");  // Top of Book
+                marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
+
+                // 设置订阅的条目类型
+                FIX::Group mdEntryTypes(267, FIX::FIELD::MDEntryType);  // 267=NoMDEntryTypes
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "0");  // Bid
+                marketDataRequest.addGroup(mdEntryTypes);
+        
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "1");  // Offer
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "2");  // Trade
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "4");  // Opening Price
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "5");  // Closing Price
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "7");  // Trading Session High Price
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "8");  // Trading Session Low Price
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                mdEntryTypes.setField(FIX::FIELD::MDEntryType, "B");  // Trade Volume
+                marketDataRequest.addGroup(mdEntryTypes);
+
+                // 设置订阅的合约
+                FIX::Group relatedSym(146, FIX::FIELD::Symbol);  // 146=NoRelatedSym
+                relatedSym.setField(FIX::FIELD::Symbol, "BTCUSD");
+                marketDataRequest.addGroup(relatedSym);
+
+                // 发送 MarketDataRequest 消息
+                FIX::Session::sendToTarget(marketDataRequest, sessionID);
             }
 
             // 字段编号到字段说明的映射
@@ -221,6 +282,52 @@ public:
             std::cerr << "Logon rejected: " << e.what() << std::endl;
         }
     }
+
+    void unsubscribe(const FIX::SessionID& sessionID) {
+        // 构建 MarketDataRequest 消息
+        FIX::Message marketDataRequest;
+        marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
+
+        // 设置请求字段
+        marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");
+        marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "2");  // Disable previous Snapshot + Update Request (Unsubscribe)
+        marketDataRequest.setField(FIX::FIELD::MarketDepth, "1");  // Top of Book
+        marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
+
+        // 设置订阅的条目类型
+        FIX::Group mdEntryTypes(267, FIX::FIELD::MDEntryType);  // 267=NoMDEntryTypes
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "0");  // Bid
+        marketDataRequest.addGroup(mdEntryTypes);
+        
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "1");  // Offer
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "2");  // Trade
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "4");  // Opening Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "5");  // Closing Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "7");  // Trading Session High Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "8");  // Trading Session Low Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "B");  // Trade Volume
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        // 设置订阅的合约
+        FIX::Group relatedSym(146, FIX::FIELD::Symbol);  // 146=NoRelatedSym
+        relatedSym.setField(FIX::FIELD::Symbol, "BTCUSD");
+        marketDataRequest.addGroup(relatedSym);
+
+        // 发送 MarketDataRequest 消息
+        FIX::Session::sendToTarget(marketDataRequest, sessionID);
+    }
 };
 
 int main(int argc, char** argv) {
@@ -241,7 +348,16 @@ int main(int argc, char** argv) {
 
         initiator.start();
 
-        std::cout << "Press Ctrl-C to exit." << std::endl;
+        std::cout << "Press Enter to unsubscribe." << std::endl;
+        std::cin.get();
+
+        // 使用迭代器访问第一个会话ID
+        const auto& sessions = initiator.getSessions();
+        if (!sessions.empty()) {
+            application.unsubscribe(*sessions.begin());
+        }
+
+        std::cout << "Unsubscribed. Press Ctrl-C to exit." << std::endl;
         while (true) {
             FIX::process_sleep(1);
         }

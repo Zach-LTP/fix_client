@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 class MyApplication : public FIX::Application {
 public:
@@ -24,7 +25,7 @@ public:
         // 设置请求字段
         marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");
         marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "1");  // Snapshot + Updates (Subscribe)
-        marketDataRequest.setField(FIX::FIELD::MarketDepth, "0");  // Full Market Depth
+        marketDataRequest.setField(FIX::FIELD::MarketDepth, "1");  // Top of Book
         marketDataRequest.setField(FIX::FIELD::MDUpdateType, "1");  // Incremental Refresh
 
         // 设置订阅的条目类型
@@ -36,6 +37,21 @@ public:
         marketDataRequest.addGroup(mdEntryTypes);
 
         mdEntryTypes.setField(FIX::FIELD::MDEntryType, "2");  // Trade
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "4");  // Opening Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "5");  // Closing Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "7");  // Trading Session High Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "8");  // Trading Session Low Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "B");  // Trade Volume
         marketDataRequest.addGroup(mdEntryTypes);
 
         // 设置订阅的合约
@@ -77,6 +93,17 @@ public:
                 FIX::Group marketDataGroup(268, FIX::FIELD::MDEntryType);  // (268=NoMDEntries, 269=MDEntryType)
                 int index = 1;
 
+                std::unordered_map<std::string, std::string> entryTypeMap = {
+                    {"0", "Bid"},
+                    {"1", "Offer"},
+                    {"2", "Trade"},
+                    {"4", "Opening Price"},
+                    {"5", "Closing Price"},
+                    {"7", "Trading Session High Price"},
+                    {"8", "Trading Session Low Price"},
+                    {"B", "Trade Volume"}
+                };
+
                 while (true) {
                     try {
                         message.getGroup(index, marketDataGroup);
@@ -87,6 +114,7 @@ public:
                     FIX::StringField entryTypeField(FIX::FIELD::MDEntryType);
                     marketDataGroup.getField(entryTypeField);
                     std::string entryType = entryTypeField.getString();
+                    std::string entryTypeDesc = entryTypeMap[entryType];
 
                     double price = 0.0;
                     double volume = 0.0;
@@ -112,9 +140,9 @@ public:
                         symbol = symbolField.getString();
                     }
 
-                    if (message.isSetField(FIX::FIELD::MDEntryDate)) {
+                    if (marketDataGroup.isSetField(FIX::FIELD::MDEntryDate)) {
                         FIX::UtcDateOnlyField dateField(FIX::FIELD::MDEntryDate);
-                        message.getField(dateField);
+                        marketDataGroup.getField(dateField);
                         timestamp = dateField.getString();
                     }
 
@@ -138,11 +166,52 @@ public:
                         std::cout << "Update Action: " << updateAction << std::endl;
                     }
 
-                    std::cout << "Timestamp=[" << timestamp << "], Channel=[" << channel << "] Entry " << index << ": Symbol=" << symbol << ", Type=" << entryType << ", Price=" << price << ", Volume=" << volume << std::endl;
+                    std::cout << "Timestamp=[" << timestamp << "], Channel=[" << channel << "] Entry " << index << ": Symbol=" << symbol << ", Type=" << entryType << " (" << entryTypeDesc << "), Price=" << price << ", Volume=" << volume << std::endl;
 
                     index++;
                 }
             }
+
+            // 字段编号到字段说明的映射
+            std::unordered_map<int, std::string> fieldDescriptions = {
+                {8, "BeginString"},
+                {9, "BodyLength"},
+                {35, "MsgType"},
+                {34, "MsgSeqNum"},
+                {49, "SenderCompID"},
+                {52, "SendingTime"},
+                {56, "TargetCompID"},
+                {55, "Symbol"},
+                {262, "MDReqID"},
+                {268, "NoMDEntries"},
+                {10, "CheckSum"},
+                {281, "MDReqRejReason"}
+                // 你可以根据需要添加更多的字段说明
+            };
+
+            // 解析并输出所有字段
+            std::cout << "All fields in the message:" << std::endl;
+            const FIX::FieldMap& headerFields = message.getHeader();
+            for (FIX::FieldMap::const_iterator it = headerFields.begin(); it != headerFields.end(); ++it) {
+                int tag = it->getTag();
+                std::string description = fieldDescriptions.count(tag) ? fieldDescriptions[tag] : "Unknown";
+                std::cout << "Header Field " << tag << " (" << description << "): " << it->getString() << std::endl;
+            }
+
+            const FIX::FieldMap& bodyFields = message;
+            for (FIX::FieldMap::const_iterator it = bodyFields.begin(); it != bodyFields.end(); ++it) {
+                int tag = it->getTag();
+                std::string description = fieldDescriptions.count(tag) ? fieldDescriptions[tag] : "Unknown";
+                std::cout << "Body Field " << tag << " (" << description << "): " << it->getString() << std::endl;
+            }
+
+            const FIX::FieldMap& trailerFields = message.getTrailer();
+            for (FIX::FieldMap::const_iterator it = trailerFields.begin(); it != trailerFields.end(); ++it) {
+                int tag = it->getTag();
+                std::string description = fieldDescriptions.count(tag) ? fieldDescriptions[tag] : "Unknown";
+                std::cout << "Trailer Field " << tag << " (" << description << "): " << it->getString() << std::endl;
+            }
+
         } catch (const FIX::FieldNotFound& e) {
             std::cerr << "Field not found: " << e.what() << std::endl;
         } catch (const FIX::IncorrectDataFormat& e) {

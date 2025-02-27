@@ -3,6 +3,7 @@
 #include <quickfix/SocketInitiator.h>
 #include <quickfix/Log.h>
 #include <quickfix/SessionSettings.h>
+#include <quickfix/Field.h>
 
 #include <iostream>
 #include <memory>
@@ -10,6 +11,18 @@
 
 class MyApplication : public FIX::Application {
 public:
+
+    void printMessageFields(const FIX::Message &message)
+    {
+        FIX::DataDictionary dataDictionary("/usr/local/share/quickfix/FIX44.xml");
+        for (FIX::FieldMap::const_iterator it = message.begin(); it != message.end(); ++it)
+        {
+            std::string fieldName;
+            dataDictionary.getFieldName(it->getTag(), fieldName);
+            std::cout << fieldName << "->" << it->getFixString() << std::endl;
+        }
+    }
+
     void onCreate(const FIX::SessionID& sessionID) override {
         std::cout << "Session created: " << sessionID << std::endl;
     }
@@ -17,61 +30,79 @@ public:
     void onLogon(const FIX::SessionID& sessionID) override {
         std::cout << "Logon: " << sessionID << std::endl;
 
-        // 构建 MarketDataRequest 消息
         FIX::Message marketDataRequest;
         marketDataRequest.getHeader().setField(FIX::FIELD::MsgType, FIX::MsgType_MarketDataRequest);
 
-        // 设置请求字段
-        marketDataRequest.setField(FIX::FIELD::MDReqID, "uniqueID");  // Market Data Request ID
-        marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "1");  // Snapshot + Updates (Subscribe)
+        marketDataRequest.setField(FIX::FIELD::MDReqID, "ltp"+std::to_string(time(NULL))+"ltp");
+        marketDataRequest.setField(FIX::FIELD::SubscriptionRequestType, "0");  // Snapshot
         marketDataRequest.setField(FIX::FIELD::MarketDepth, "0");  // Full Market Depth
         marketDataRequest.setField(FIX::FIELD::MDUpdateType, "0");  // Full Refresh
 
-        // 设置订阅的条目类型
         FIX::Group mdEntryTypes(267, FIX::FIELD::MDEntryType);  // 267=NoMDEntryTypes
         mdEntryTypes.setField(FIX::FIELD::MDEntryType, "0");  // Bid
         marketDataRequest.addGroup(mdEntryTypes);
         
         mdEntryTypes.setField(FIX::FIELD::MDEntryType, "1");  // Offer
         marketDataRequest.addGroup(mdEntryTypes);
-
+        
         mdEntryTypes.setField(FIX::FIELD::MDEntryType, "2");  // Trade
         marketDataRequest.addGroup(mdEntryTypes);
 
-        // 设置订阅的合约
-        FIX::Group relatedSym(146, FIX::FIELD::Symbol);  // 146=NoRelatedSym
-        relatedSym.setField(FIX::FIELD::Symbol, "BTCUSD");
-        marketDataRequest.addGroup(relatedSym);
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "4");  // Opening Price
+        marketDataRequest.addGroup(mdEntryTypes);
 
-        // 发送 MarketDataRequest 消息
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "5");  // Closing Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "7");  // Trading Session High Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "8");  // Trading Session Low Price
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        mdEntryTypes.setField(FIX::FIELD::MDEntryType, "B");  // Trading Volume
+        marketDataRequest.addGroup(mdEntryTypes);
+
+        FIX::Group noRelatedSymGroup(146, FIX::FIELD::Symbol);  // 146=NoRelatedSym
+        noRelatedSymGroup.setField(FIX::FIELD::Symbol, "BTCUSD");
+        marketDataRequest.addGroup(noRelatedSymGroup);
+
         FIX::Session::sendToTarget(marketDataRequest, sessionID);
     }
 
     void onLogout(const FIX::SessionID& sessionID) override {
         std::cout << "Logout: " << sessionID << std::endl;
     }
-
     void toAdmin(FIX::Message& message, const FIX::SessionID& sessionID) override {
         if (message.getHeader().getField(FIX::FIELD::MsgType) == FIX::MsgType_Logon) {
             message.setField(FIX::Username("lts24md"));
             message.setField(FIX::Password("OlglriQKONLG4V5VzM4e"));
         }
+        std::cout << "Sending admin message: " << message << std::endl;
     }
 
-    void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {}
+    void toApp(FIX::Message& message, const FIX::SessionID& sessionID) override {
+        std::cout << "Sending application message: " << message << std::endl;
+        printMessageFields(message);
+    }
 
-    void fromAdmin(const FIX::Message& message, const FIX::SessionID& sessionID) override {}
+    void fromAdmin(const FIX::Message& message, const FIX::SessionID& sessionID) override {
+        std::cout << "Received admin message: " << message << std::endl;
+    }
 
     void fromApp(const FIX::Message& message, const FIX::SessionID& sessionID) override {
         std::cout << "Received application message: " << message << std::endl;
-
+        printMessageFields(message);
+        // 8=FIX.4.49=14435=W34=1249=DBS52=20241105-10:01:02.95156=LTS24MD55=BTCUSD262=uniqueID268=3269=2270=70000271=0.1273=01:22:55269=0346=0269=1346=010=133
+        
         try {
             FIX::StringField msgType(FIX::FIELD::MsgType);
             message.getHeader().getField(msgType);
 
             std::string msgTypeValue = msgType.getString();
 
-            if (msgTypeValue == FIX::MsgType_MarketDataSnapshotFullRefresh) {
+            if (msgTypeValue == FIX::MsgType_MarketDataSnapshotFullRefresh) 
+            {
                 std::cout << "Received MarketDataSnapshotFullRefresh message: " << message << std::endl;
 
                 FIX::Group marketDataGroup(268, FIX::FIELD::MDEntryType);  // (268=NoMDEntries, 269=MDEntryType)
@@ -90,9 +121,6 @@ public:
 
                     double price = 0.0;
                     double volume = 0.0;
-                    std::string symbol = "";
-                    std::string timestamp = "";
-                    std::string channel = "";
 
                     if (marketDataGroup.isSetField(FIX::FIELD::MDEntryPx)) {
                         FIX::DoubleField priceField(FIX::FIELD::MDEntryPx);
@@ -106,37 +134,21 @@ public:
                         volume = volumeField.getValue();
                     }
 
-                    if (message.isSetField(FIX::FIELD::Symbol)) {
-                        FIX::StringField symbolField(FIX::FIELD::Symbol);
-                        message.getField(symbolField);
-                        symbol = symbolField.getString();
-                    }
-
-                    if (marketDataGroup.isSetField(FIX::FIELD::MDEntryTime)) {
-                        FIX::UtcTimeStampField timestampField(FIX::FIELD::MDEntryTime);
-                        marketDataGroup.getField(timestampField);
-                        timestamp = timestampField.getString();
-                    }
-
-                    if (marketDataGroup.isSetField(FIX::FIELD::MDEntryID)) {
-                        FIX::StringField channelField(FIX::FIELD::MDEntryID);
-                        marketDataGroup.getField(channelField);
-                        channel = channelField.getString();
-                    }
-
-                    std::cout << "Timestamp=[" << timestamp << "], Channel=[" << channel << "] Entry " << index << ": Symbol=" << symbol << ", Type=" << entryType << ", Price=" << price << ", Volume=" << volume << std::endl;
+                    std::cout << "MDEntryType: " << entryType 
+                            << ", Price: " << price 
+                            << ", Volume: " << volume << std::endl;
 
                     index++;
                 }
             }
+            else 
+            {
+                std::cout << "Received non-market data message: " << message << std::endl;
+            }
         } catch (const FIX::FieldNotFound& e) {
             std::cerr << "Field not found: " << e.what() << std::endl;
-        } catch (const FIX::IncorrectDataFormat& e) {
-            std::cerr << "Incorrect data format: " << e.what() << std::endl;
-        } catch (const FIX::IncorrectTagValue& e) {
-            std::cerr << "Incorrect tag value: " << e.what() << std::endl;
-        } catch (const FIX::RejectLogon& e) {
-            std::cerr << "Logon rejected: " << e.what() << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Error in fromApp: " << e.what() << std::endl;
         }
     }
 };
@@ -163,7 +175,7 @@ int main(int argc, char** argv) {
         while (true) {
             FIX::process_sleep(1);
         }
-
+        
         initiator.stop();
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
